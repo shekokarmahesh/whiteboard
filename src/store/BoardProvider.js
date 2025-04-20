@@ -12,31 +12,43 @@ import {
 } from "../utils/element";
 import BoardContext from "./board-context";
 
-// Initial state for the board
+/**
+ * Initial state for the drawing board
+ * Contains all necessary data to manage the drawing experience
+ */
 const initialBoardState = {
   activeToolItem: TOOL_ITEMS.BRUSH, // Default tool is brush
   toolActionType: TOOL_ACTION_TYPES.NONE, // No action initially
   elements: [], // List of drawn elements
-  history: [[]], // History of states for undo/redo
-  index: 0, // Current index in the history
-  selectedElement: null, // Currently selected element
+  history: [[]], // History of states for undo/redo (2D array of element states)
+  index: 0, // Current index in the history array
+  selectedElement: null, // Currently selected element for manipulation
 };
 
-// Reducer function to handle state transitions
+/**
+ * Reducer function to manage board state transitions
+ * Uses a switch statement to handle different action types
+ * 
+ * @param {Object} state - Current board state
+ * @param {Object} action - Action object with type and payload
+ * @returns {Object} - Updated board state
+ */
 const boardReducer = (state, action) => {
   switch (action.type) {
     case BOARD_ACTIONS.CHANGE_TOOL:
-      // Change the active tool
+      // Change the active drawing tool (brush, line, rectangle, etc.)
       return { ...state, activeToolItem: action.payload.tool };
 
     case BOARD_ACTIONS.CHANGE_ACTION_TYPE:
-      // Change the current action type
+      // Change the current interaction mode (drawing, writing, erasing, etc.)
       return { ...state, toolActionType: action.payload.actionType };
 
     case BOARD_ACTIONS.DRAW_DOWN: {
-      // Start drawing a new element
-      const id = state.elements.length; // Assign a unique ID
+      // Start drawing a new element when mouse/pointer is pressed down
+      const id = state.elements.length; // Assign a unique ID based on array length
       const { clientX, clientY, size, strokeColor, fillColor } = action.payload;
+      
+      // Create new element at initial position
       const newElement = createRoughElement(
         id,
         clientX,
@@ -50,22 +62,29 @@ const boardReducer = (state, action) => {
           size,
         }
       );
+      
+      // Add the new element to existing elements
       const newElements = [...state.elements, newElement];
+      
+      // Update state with new element and appropriate action type
       return {
         ...state,
         elements: newElements,
+        // Set action type based on whether tool is drawing or text tool
         toolActionType: DRAW_TOOL_ITEMS.includes(state.activeToolItem)
           ? TOOL_ACTION_TYPES.DRAWING
           : TOOL_ACTION_TYPES.WRITING,
-        selectedElement: newElement,
+        selectedElement: newElement, // Set as selected element
       };
     }
 
     case BOARD_ACTIONS.DRAW_MOVE: {
-      // Update the element being drawn as the mouse moves
+      // Update element dimensions as mouse/pointer moves
       const { clientX, clientY } = action.payload;
-      const index = state.elements.length - 1; // Last element being drawn
+      const index = state.elements.length - 1; // Get last element (currently being drawn)
       const { x1, y1, type, stroke, text, fill, size } = state.elements[index];
+      
+      // Update the element with new end coordinates
       return {
         ...state,
         elements: getUpdatedElements(
@@ -87,63 +106,77 @@ const boardReducer = (state, action) => {
     }
 
     case BOARD_ACTIONS.DRAW_UP: {
-      // Finalize the drawing and update history
+      // Finalize drawing when mouse/pointer is released
       const elements = state.elements;
-      let newHistory = state.history; // 2D array for history
-      newHistory = newHistory.slice(0, state.index + 1); // Remove future states
+      
+      // Update history stack for undo/redo functionality
+      let newHistory = state.history;
+      newHistory = newHistory.slice(0, state.index + 1); // Remove any future history (after undos)
       newHistory.push(elements); // Add current state to history
+      
       return {
         ...state,
         history: newHistory,
-        index: newHistory.length - 1, // Update index to the latest state
+        index: newHistory.length - 1, // Set index to latest history entry
       };
     }
 
     case BOARD_ACTIONS.ERASE: {
-      // Erase elements near the given point
+      // Remove elements at the specified point
       const { clientX, clientY } = action.payload;
+      
+      // Filter out elements that intersect with eraser position
       const newElements = state.elements.filter((ele) => {
         return !isPointNearElement(ele, {
           pointX: clientX,
           pointY: clientY,
         });
       });
-      if (newElements.length === state.elements.length) return state; // No change
+      
+      // Only update state if something was actually erased
+      if (newElements.length === state.elements.length) return state;
+      
       const prevIndex = state.index;
       return {
         ...state,
         elements: newElements,
-        history: [...state.history, newElements], // Update history
+        history: [...state.history, newElements], // Add new state to history
         index: prevIndex + 1,
         toolActionType: TOOL_ACTION_TYPES.ERASING,
       };
     }
 
     case BOARD_ACTIONS.CHANGE_TEXT: {
-      // Update the text of the selected element
+      // Update text content of a text element
       const index = state.selectedElement.id;
       const elements = state.elements;
       const { x1, y1, id, type } = elements[index];
+      
+      // Create updated text element
       const newEle = createRoughElement(id, x1, y1, null, null, {
         type,
         text: action.payload.text,
         stroke: action.payload.strokeColor,
         size: action.payload.size,
       });
+      
+      // Replace old element with updated one
       const elementsCopy = [...state.elements];
       elementsCopy[id] = newEle;
+      
       const prevIndex = state.index;
       return {
         ...state,
         elements: elementsCopy,
-        history: [...state.history, elementsCopy], // Update history
+        history: [...state.history, elementsCopy], // Add to history
         index: prevIndex + 1,
       };
     }
 
     case BOARD_ACTIONS.UNDO: {
-      // Undo the last action
-      if (state.index <= 0) return state; // No more undo
+      // Revert to previous state in history
+      if (state.index <= 0) return state; // Can't undo if at first state
+      
       const prevElements = state.history[state.index - 1];
       return {
         ...state,
@@ -153,8 +186,9 @@ const boardReducer = (state, action) => {
     }
 
     case BOARD_ACTIONS.REDO: {
-      // Redo the next action
-      if (state.index >= state.history.length - 1) return state; // No more redo
+      // Go forward to next state in history (after undo)
+      if (state.index >= state.history.length - 1) return state; // Can't redo if at latest state
+      
       const nextElements = state.history[state.index + 1];
       return {
         ...state,
@@ -164,20 +198,32 @@ const boardReducer = (state, action) => {
     }
 
     default: {
-      // Return the current state for unknown actions
+      // Handle unknown action types by returning unchanged state
       return state;
     }
   }
 };
 
-// Context provider for the board
+/**
+ * React Context Provider for the drawing board
+ * Manages state and provides event handlers to child components
+ * 
+ * @param {Object} props - Component props
+ * @param {React.ReactNode} props.children - Child components
+ * @returns {JSX.Element} - Context provider component
+ */
 export const BoardContextProvider = ({ children }) => {
+  // Initialize board state with useReducer hook
   const [boardState, dispatchBoardAction] = useReducer(
     boardReducer,
     initialBoardState
   );
 
-  // Handler to change the active tool
+  /**
+   * Handler to change the active drawing tool
+   * 
+   * @param {string} tool - The tool identifier to switch to
+   */
   const changeToolHandler = (tool) => {
     dispatchBoardAction({
       type: BOARD_ACTIONS.CHANGE_TOOL,
@@ -185,13 +231,19 @@ export const BoardContextProvider = ({ children }) => {
     });
   };
 
-  // Handler for mouse down events on the board
+  /**
+   * Handler for mouse down events on the board
+   * Initiates drawing or erasing based on active tool
+   * 
+   * @param {MouseEvent} event - Mouse event object
+   * @param {Object} toolboxState - Current state of the toolbox (colors, sizes)
+   */
   const boardMouseDownHandler = (event, toolboxState) => {
     if (boardState.toolActionType === TOOL_ACTION_TYPES.WRITING) return;
     const { clientX, clientY } = event;
 
     if (boardState.activeToolItem === TOOL_ITEMS.ERASER) {
-      // Switch to erasing mode
+      // Handle eraser tool specifically
       dispatchBoardAction({
         type: BOARD_ACTIONS.CHANGE_ACTION_TYPE,
         payload: {
@@ -200,7 +252,8 @@ export const BoardContextProvider = ({ children }) => {
       });
       return;
     }
-    // Start drawing
+    
+    // For all other tools, start drawing
     dispatchBoardAction({
       type: BOARD_ACTIONS.DRAW_DOWN,
       payload: {
@@ -213,11 +266,17 @@ export const BoardContextProvider = ({ children }) => {
     });
   };
 
-  // Handler for mouse move events on the board
+  /**
+   * Handler for mouse move events on the board
+   * Updates drawing or performs erasing based on current action type
+   * 
+   * @param {MouseEvent} event - Mouse event object
+   */
   const boardMouseMoveHandler = (event) => {
     const { clientX, clientY } = event;
+    
     if (boardState.toolActionType === TOOL_ACTION_TYPES.DRAWING) {
-      // Update the drawing
+      // Continue drawing the current element
       dispatchBoardAction({
         type: BOARD_ACTIONS.DRAW_MOVE,
         payload: {
@@ -226,7 +285,7 @@ export const BoardContextProvider = ({ children }) => {
         },
       });
     } else if (boardState.toolActionType === TOOL_ACTION_TYPES.ERASING) {
-      // Erase elements
+      // Continue erasing elements
       dispatchBoardAction({
         type: BOARD_ACTIONS.ERASE,
         payload: {
@@ -237,16 +296,21 @@ export const BoardContextProvider = ({ children }) => {
     }
   };
 
-  // Handler for mouse up events on the board
+  /**
+   * Handler for mouse up events on the board
+   * Finalizes drawing and resets action state
+   */
   const boardMouseUpHandler = () => {
     if (boardState.toolActionType === TOOL_ACTION_TYPES.WRITING) return;
+    
     if (boardState.toolActionType === TOOL_ACTION_TYPES.DRAWING) {
-      // Finalize the drawing
+      // Finalize the current drawing operation
       dispatchBoardAction({
         type: BOARD_ACTIONS.DRAW_UP,
       });
     }
-    // Reset the action type
+    
+    // Reset to neutral action state
     dispatchBoardAction({
       type: BOARD_ACTIONS.CHANGE_ACTION_TYPE,
       payload: {
@@ -255,8 +319,15 @@ export const BoardContextProvider = ({ children }) => {
     });
   };
 
-  // Handler for when the text area loses focus
+  /**
+   * Handler for when the text area loses focus
+   * Saves text content and resets action state
+   * 
+   * @param {FocusEvent} event - Focus event from textarea
+   * @param {Object} toolboxState - Current state of the toolbox
+   */
   const textAreaBlurHandler = (event, toolboxState) => {
+    // Update text content with the value from textarea
     dispatchBoardAction({
       type: BOARD_ACTIONS.CHANGE_TEXT,
       payload: {
@@ -265,6 +336,8 @@ export const BoardContextProvider = ({ children }) => {
         size: toolboxState[boardState.activeToolItem]?.size,
       },
     });
+    
+    // Reset action type after text input
     dispatchBoardAction({
       type: BOARD_ACTIONS.CHANGE_ACTION_TYPE,
       payload: {
@@ -273,21 +346,27 @@ export const BoardContextProvider = ({ children }) => {
     });
   };
 
-  // Handler for undo action
+  /**
+   * Handler for undo action
+   * Reverts to previous state in history
+   */
   const boardUndoHandler = () => {
     dispatchBoardAction({
       type: BOARD_ACTIONS.UNDO,
     });
   };
 
-  // Handler for redo action
+  /**
+   * Handler for redo action
+   * Advances to next state in history after undo
+   */
   const boardRedoHandler = () => {
     dispatchBoardAction({
       type: BOARD_ACTIONS.REDO,
     });
   };
 
-  // Context value to be provided to consumers
+  // Create context value object with all state and handlers
   const boardContext = {
     activeToolItem: boardState.activeToolItem,
     toolActionType: boardState.toolActionType,
@@ -304,6 +383,7 @@ export const BoardContextProvider = ({ children }) => {
     redo: boardRedoHandler,
   };
 
+  // Provide context to all children
   return (
     <BoardContext.Provider value={boardContext}>
       {children}
